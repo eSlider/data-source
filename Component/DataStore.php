@@ -2,16 +2,19 @@
 namespace Mapbender\DataSourceBundle\Component;
 
 use Doctrine\DBAL\Connection;
-use Doctrine\DBAL\Statement;
 use Mapbender\DataSourceBundle\Component\Drivers\BaseDriver;
 use Mapbender\DataSourceBundle\Component\Drivers\DoctrineBaseDriver;
-use Mapbender\DataSourceBundle\Component\Drivers\IDriver;
+use Mapbender\DataSourceBundle\Component\Drivers\Interfaces\IDriver;
+use Mapbender\DataSourceBundle\Component\Drivers\Interfaces\Mappable;
+use Mapbender\DataSourceBundle\Component\Drivers\Interfaces\Treeable;
+use Mapbender\DataSourceBundle\Component\Drivers\Oracle;
 use Mapbender\DataSourceBundle\Component\Drivers\PostgreSQL;
 use Mapbender\DataSourceBundle\Component\Drivers\SQLite;
 use Mapbender\DataSourceBundle\Component\Drivers\YAML;
 use Mapbender\DataSourceBundle\Entity\DataItem;
 use Symfony\Component\DependencyInjection\ContainerAware;
 use Symfony\Component\DependencyInjection\ContainerInterface;
+use Symfony\Component\Security\Acl\Exception\Exception;
 
 /**
  * Class DataSource
@@ -35,8 +38,6 @@ class DataStore extends ContainerAware
     protected $allowSave;
     protected $allowRemove;
 
-    protected $parentField;
-    protected $mapping;
 
     /**
      * @param ContainerInterface $container
@@ -61,7 +62,7 @@ class DataStore extends ContainerAware
             $methods = get_class_methods(get_class($this));
             foreach ($args as $key => $value) {
                 $keyMethod = "set" . ucwords($key);
-                if($key == "fields"){
+                if ($key == "fields") {
                     continue;
                 }
                 if (in_array($keyMethod, $methods)) {
@@ -83,7 +84,6 @@ class DataStore extends ContainerAware
                     case self::POSTGRESQL_PLATFORM;
                         $driver = new PostgreSQL($this->container, $args);
                         break;
-
                 }
                 $driver->connect($connectionName);
         }
@@ -121,20 +121,11 @@ class DataStore extends ContainerAware
      */
     public function getParent($id)
     {
-        /** @var Statement $statement */
-        $dataItem     = $this->get($id);
-        $queryBuilder = $this->driver->getSelectQueryBuilder();
-        $queryBuilder->andWhere($this->driver->getUniqueId() . " = " . $dataItem->getAttribute($this->getParentField()));
-        $statement  = $queryBuilder->execute();
-        $rows       = array($statement->fetch());
-        $hasResults = count($rows) > 0;
-        $parent     = null;
-
-        if ($hasResults) {
-            $this->driver->prepareResults($rows);
-            $parent = $rows[0];
+        $parent = null;
+        $driver = $this->getDriver();
+        if ($driver instanceof Treeable) {
+            $parent = $driver->getParent($this->get($id));
         }
-
         return $parent;
     }
 
@@ -147,29 +138,12 @@ class DataStore extends ContainerAware
      */
     public function getTree($parentId = null, $recursive = true)
     {
-        $queryBuilder = $this->driver->getSelectQueryBuilder();
-        if ($parentId === null) {
-            $queryBuilder->andWhere($this->getParentField() . " IS NULL");
-        } else {
-            $queryBuilder->andWhere($this->getParentField() . " = " . $parentId);
+        $results = null;
+        $driver  = $this->getDriver();
+        if ($driver instanceof Treeable) {
+            $results = $driver->getTree($parentId, $recursive);
         }
-        $statement  = $queryBuilder->execute();
-        $rows       = $statement->fetchAll();
-        $hasResults = count($rows) > 0;
-
-        // Cast array to DataItem array list
-        if ($hasResults) {
-            $this->driver->prepareResults($rows);
-        }
-
-        if ($recursive) {
-            /** @var DataItem $dataItem */
-            foreach ($rows as $dataItem) {
-                $dataItem->setChildren($this->getTree($dataItem->getId(), $recursive));
-            }
-        }
-
-        return $rows;
+        return $results;
     }
 
     /**
@@ -186,14 +160,14 @@ class DataStore extends ContainerAware
     /**
      * Save data item
      *
-     * @param DataItem|array $item Data item
+     * @param DataItem|array $item       Data item
      * @param bool           $autoUpdate Create item if doesn't exists
      * @return DataItem
      * @throws \Exception
      */
     public function save($item, $autoUpdate = true)
     {
-        $result = null;
+        $result          = null;
         $this->allowSave = true;
         if (isset($this->events['onBeforeSave'])) {
             $this->secureEval($this->events['onBeforeSave'], array(
@@ -202,6 +176,8 @@ class DataStore extends ContainerAware
         }
         if ($this->allowSave) {
             $result = $this->getDriver()->save($item, $autoUpdate);
+        } else {
+            throw new Exception("Save isn't permitted");
         }
 
         if (isset($this->events['onAfterSave'])) {
@@ -220,18 +196,22 @@ class DataStore extends ContainerAware
      */
     public function remove($args)
     {
-        $result = null;
+        $result            = null;
         $this->allowRemove = true;
-        if (isset($this->events['onBeforeRemove'])) {
 
+        if (isset($this->events['onBeforeRemove'])) {
             $this->secureEval($this->events['onBeforeRemove'], array(
                 'args'   => &$args,
                 'method' => 'remove'
             ));
         }
+
         if ($this->allowRemove) {
             $result = $this->getDriver()->remove($args);
+        } else {
+            throw new Exception("Remove isn't permitted");
         }
+
         if (isset($this->events['onAfterRemove'])) {
             $this->secureEval($this->events['onAfterRemove'], array(
                 'args' => &$args
@@ -261,7 +241,7 @@ class DataStore extends ContainerAware
         if (isset($this->events['onAfterSearch'])) {
             $this->secureEval($this->events['onAfterSearch'], array(
                 'criteria' => &$criteria,
-                'results' => &$results
+                'results'  => &$results
             ));
         }
 
@@ -275,11 +255,7 @@ class DataStore extends ContainerAware
      */
     public function isOracle()
     {
-        static $r;
-        if (is_null($r)) {
-            $r = $this->driver->getPlatformName() == self::ORACLE_PLATFORM;
-        }
-        return $r;
+        return $this->driver instanceof Oracle;
     }
 
 
@@ -300,11 +276,7 @@ class DataStore extends ContainerAware
      */
     public function isSqlite()
     {
-        static $r;
-        if (is_null($r)) {
-            $r = $this->driver->getPlatformName() == self::SQLITE_PLATFORM;
-        }
-        return $r;
+        return $this->driver instanceof SQLite;
     }
 
     /**
@@ -314,11 +286,7 @@ class DataStore extends ContainerAware
      */
     public function isPostgres()
     {
-        static $r;
-        if (is_null($r)) {
-            $r = $this->driver->getPlatformName() == self::POSTGRESQL_PLATFORM;
-        }
-        return $r;
+        return $this->driver instanceof PostgreSQL;
     }
 
     /**
@@ -360,15 +328,22 @@ class DataStore extends ContainerAware
 
 
     /**
-     * Get DBAL Connection
+     * Get driver connection
      *
-     * @return Connection
+     * @return Connection|mixed
      */
     public function getConnection()
     {
         return $this->getDriver()->getConnection();
     }
 
+    /**
+     * Evaluate PHP code
+     *
+     * @param string $code PHP code
+     * @param array  $args Variables to be available by code executing
+     * @throws \Exception
+     */
     public function secureEval($code, array $args = array())
     {
         //extract($args);
@@ -394,31 +369,6 @@ class DataStore extends ContainerAware
 
     }
 
-    /**
-     * @param mixed $parentField
-     */
-    public function setParentField($parentField)
-    {
-        $this->parentField = $parentField;
-    }
-
-    /**
-     * @return mixed
-     */
-    public function getParentField()
-    {
-        return $this->parentField;
-    }
-
-    /**
-     * @param mixed $mapping
-     * @return DataStore
-     */
-    public function setMapping($mapping)
-    {
-        $this->mapping = $mapping;
-        return $this;
-    }
 
     /**
      * Prevent save item.
@@ -443,25 +393,17 @@ class DataStore extends ContainerAware
     }
 
     /**
-     * @param $mappingId
-     * @param $fid
-     * @internal param $id $
+     * @param int $mappingId
+     * @param int $id
+     * @return array
      */
     public function getTroughMapping($mappingId, $id)
     {
-
-        $config = $this->mapping[ $mappingId ];
-
-        $dataStore = $this->container->get("data.source")->get($config["externalDataStore"]);
-        $rightSide = $this->get($id)->getAttribute($config['internalId']);
-        $leftSide  = "t.".$config['externalId'];
-        $where     = "$leftSide='$rightSide'";
-
-        $qb = $dataStore->getDriver()->getSelectQueryBuilder();
-
-        $qb->where($where);
-        $result = $qb->execute();
-        return $result->fetchAll();
-
+        $r      = null;
+        $driver = $this->getDriver();
+        if ($driver instanceof Mappable) {
+            $r = $driver->getTroughMapping($mappingId, $id);
+        }
+        return $r;
     }
 }

@@ -1,6 +1,7 @@
 <?php
 namespace Mapbender\DataSourceBundle\Component\Drivers;
 
+use Mapbender\DataSourceBundle\Component\Drivers\Interfaces\Geographic;
 use Mapbender\DataSourceBundle\Entity\DataItem;
 
 /**

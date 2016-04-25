@@ -5,6 +5,7 @@ use Mapbender\DataSourceBundle\Component\DataStore;
 use Mapbender\DataSourceBundle\Component\DataStoreService;
 use Mapbender\DataSourceBundle\Component\Drivers\BaseDriver;
 use Mapbender\DataSourceBundle\Component\Drivers\IDriver;
+use Mapbender\DataSourceBundle\Component\Drivers\Treeable;
 use Mapbender\DataSourceBundle\Entity\DataItem;
 
 /**
@@ -36,8 +37,13 @@ class DataStoreServiceTest extends SymfonyTest
         }
 
         $dataStore = new DataStore(parent::$container, $configuration);
+        if(!($dataStore->getDriver() instanceof Treeable)){
+            self::markTestSkipped("Driver isn't able to handle trees");
+            return;
+        }
+
         foreach ($dataStore->getTree() as $dataItem) {
-            $this->assertTrue($dataItem->getAttribute($dataStore->getParentField()) == null);
+            $this->assertTrue($dataItem->getAttribute($dataStore->getDriver()->getParentField()) == null);
             $this->assertTrue($dataItem->getAttribute($dataStore->getDriver()->getUniqueId()) > 0);
         }
     }

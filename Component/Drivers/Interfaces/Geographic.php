@@ -1,6 +1,6 @@
 <?php
 
-namespace Mapbender\DataSourceBundle\Component\Drivers;
+namespace Mapbender\DataSourceBundle\Component\Drivers\Interfaces;
 
 /**
  * Interface Geographic

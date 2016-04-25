@@ -4,6 +4,10 @@ namespace Mapbender\DataSourceBundle\Component\Drivers;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Statement;
+use Mapbender\DataSourceBundle\Component\DataStore;
+use Mapbender\DataSourceBundle\Component\Drivers\Interfaces\IDriver;
+use Mapbender\DataSourceBundle\Component\Drivers\Interfaces\Mappable;
+use Mapbender\DataSourceBundle\Component\Drivers\Interfaces\Treeable;
 use Mapbender\DataSourceBundle\Entity\DataItem;
 
 /**
@@ -12,22 +16,24 @@ use Mapbender\DataSourceBundle\Entity\DataItem;
  * @package Mapbender\DataSourceBundle\Component\Drivers
  * @author  Andriy Oblivantsev <eslider@gmail.com>
  */
-class DoctrineBaseDriver extends BaseDriver implements IDriver
+class DoctrineBaseDriver extends BaseDriver implements IDriver, Treeable, Mappable
 {
     const MAX_RESULTS = 100;
 
-    /** @var Connection */
+    /** @var Connection DBAL connection*/
     public $connection;
 
-    /**
-     * @var string Table name
-     */
+    /** @var string Table name */
     protected $tableName;
 
-    /**
-     * @var string SQL where filter
-     */
+    /** @var string SQL where filter */
     protected $sqlFilter;
+
+    /** @var string Parent field name */
+    protected $parentField;
+
+    /** @var array Mapping array */
+    protected $mapping = array();
 
     /**
      * Open connection by name$settings
@@ -348,7 +354,7 @@ class DoctrineBaseDriver extends BaseDriver implements IDriver
             }
         }
 
-        if(isset($data[ $uniqueId ]) && empty($data[ $uniqueId ])){
+        if (isset($data[ $uniqueId ]) && empty($data[ $uniqueId ])) {
             unset($data[ $uniqueId ]);
         }
 
@@ -368,7 +374,7 @@ class DoctrineBaseDriver extends BaseDriver implements IDriver
         $dataItem   = $this->create($dataItem);
         $data       = $this->cleanData($dataItem->toArray());
         $connection = $this->getConnection();
-        unset($data[$this->getUniqueId()]);
+        unset($data[ $this->getUniqueId() ]);
 
         if (empty($data)) {
             throw new \Exception("DataItem can't be updated without criteria");
@@ -388,5 +394,102 @@ class DoctrineBaseDriver extends BaseDriver implements IDriver
     {
         return $this->getConnection()
             ->delete($this->tableName, array($this->uniqueId => $this->create($arg)->getId())) > 0;
+    }
+
+    /**
+     * @param DataItem $dataItem
+     * @return null
+     */
+    public function getParent(DataItem $dataItem)
+    {
+        $queryBuilder = $this->getSelectQueryBuilder();
+        $queryBuilder->andWhere($this->getUniqueId() . " = " . $dataItem->getAttribute($this->getParentField()));
+        $statement  = $queryBuilder->execute();
+        $rows       = array($statement->fetch());
+        $hasResults = count($rows) > 0;
+        $parent     = null;
+
+        if ($hasResults) {
+            $this->prepareResults($rows);
+        }
+        $parent = $rows[0];
+        return $parent;
+    }
+
+    /**
+     * @param null $parentId
+     * @param bool $recursive
+     * @return DataItem[]|null
+     */
+    public function getTree($parentId = null, $recursive = true)
+    {
+        $queryBuilder = $this->getSelectQueryBuilder();
+        if ($parentId === null) {
+            $queryBuilder->andWhere($this->getParentField() . " IS NULL");
+        } else {
+            $queryBuilder->andWhere($this->getParentField() . " = " . $parentId);
+        }
+        $statement  = $queryBuilder->execute();
+        $rows       = $statement->fetchAll();
+        $hasResults = count($rows) > 0;
+
+        // Cast array to DataItem array list
+        if ($hasResults) {
+            $this->prepareResults($rows);
+        }
+
+        if ($recursive) {
+            /** @var DataItem $dataItem */
+            foreach ($rows as $dataItem) {
+                $dataItem->setChildren($this->getTree($dataItem->getId(), $recursive));
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @param mixed $parentField
+     */
+    public function setParentField($parentField)
+    {
+        $this->parentField = $parentField;
+    }
+
+    /**
+     * @return mixed
+     */
+    public function getParentField()
+    {
+        return $this->parentField;
+    }
+
+
+    /**
+     * @param mixed $mapping
+     * @return DataStore
+     */
+    public function setMapping($mapping)
+    {
+        $this->mapping = $mapping;
+        return $this;
+    }
+
+    /**
+     * @param $mappingId int Target ID
+     * @param $id        int Source ID
+     * @return mixed
+     */
+    public function getTroughMapping($mappingId, $id)
+    {
+        /** @var DataStore $dataStore */
+        $config    = $this->mapping[ $mappingId ];
+        $dataStore = $this->container->get("data.source")->get($config["externalDataStore"]);
+        $rightSide = $this->get($id)->getAttribute($config['internalId']);
+        $leftSide  = "t." . $config['externalId'];
+        $where     = "$leftSide='$rightSide'";
+        $qb        = $dataStore->getDriver()->getSelectQueryBuilder()->where($where);
+        $result    = $qb->execute();
+        return $result->fetchAll();
     }
 }

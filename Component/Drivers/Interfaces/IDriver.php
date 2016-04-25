@@ -1,5 +1,5 @@
 <?php
-namespace Mapbender\DataSourceBundle\Component\Drivers;
+namespace Mapbender\DataSourceBundle\Component\Drivers\Interfaces;
 
 use Mapbender\DataSourceBundle\Entity\DataItem;
 
