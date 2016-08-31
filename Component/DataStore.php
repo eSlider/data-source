@@ -6,6 +6,7 @@ use Doctrine\DBAL\Statement;
 use Mapbender\DataSourceBundle\Component\Drivers\BaseDriver;
 use Mapbender\DataSourceBundle\Component\Drivers\DoctrineBaseDriver;
 use Mapbender\DataSourceBundle\Component\Drivers\IDriver;
+use Mapbender\DataSourceBundle\Component\Drivers\Oracle;
 use Mapbender\DataSourceBundle\Component\Drivers\PostgreSQL;
 use Mapbender\DataSourceBundle\Component\Drivers\SQLite;
 use Mapbender\DataSourceBundle\Component\Drivers\YAML;
@@ -22,7 +23,7 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
  * @package Mapbender\DataSourceBundle
  * @author  Andriy Oblivantsev <eslider@gmail.com>
  */
-class DataStore extends ContainerAware
+class eDataStore extends ContainerAware
 {
     const ORACLE_PLATFORM        = 'oracle';
     const POSTGRESQL_PLATFORM    = 'postgresql';
@@ -93,6 +94,9 @@ class DataStore extends ContainerAware
                         break;
                     case self::POSTGRESQL_PLATFORM;
                         $driver = new PostgreSQL($this->container, $args);
+                        break;
+                    case self::ORACLE_PLATFORM;
+                        $driver = new Oracle($this->container, $args);
                         break;
 
                 }
